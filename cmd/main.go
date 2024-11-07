@@ -1,49 +1,24 @@
 package main
 
 import (
-	"database/sql"
 	"fmt"
-	"github.com/bitly/go-simplejson"
-	"github.com/go-sql-driver/mysql"
-	"github.com/gorilla/mux"
-	"github.com/joho/godotenv"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
+	"to-do/migrations"
+
+	"github.com/bitly/go-simplejson"
+	"github.com/gorilla/mux"
+	"github.com/joho/godotenv"
+	"gorm.io/driver/mysql"
+	"gorm.io/gorm"
 )
 
 const port = ":8080"
 
-func loadSqlFile(db *sql.DB, filePath string) error {
-	query, err := ioutil.ReadFile(filePath)
-	if err != nil {
-		return fmt.Errorf("Error reading file: %v", err)
-	}
-
-	if _, err := db.Exec(string(query)); err != nil {
-		return fmt.Errorf("Error executing query: %v", err)
-	}
-
-	fmt.Printf("Successfully loaded file %s\n", filePath)
-	return nil
-}
-func initDb(db *sql.DB) error {
-	files := []string{"database/sql/create_users_table.sql",
-		"database/sql/create_records_table.sql",
-	}
-	for _, file := range files {
-		if err := loadSqlFile(db, file); err != nil {
-			return err
-		}
-	}
-	return nil
-}
+// Завантаження .env файлу
 func init() {
-	// Завантаження .env файлу
-
-	err := godotenv.Load()
-	if err != nil {
+	if err := godotenv.Load(); err != nil {
 		log.Fatal("Error loading .env file")
 	}
 }
@@ -76,28 +51,29 @@ func router() *mux.Router {
 }
 
 func main() {
-	cfg := mysql.Config{
-		User:   os.Getenv("DBUSER"),
-		Passwd: os.Getenv("DBPASS"),
-		Net:    "tcp",
-		Addr:   fmt.Sprintf("%s:%s", os.Getenv("DBHOST"), os.Getenv("DBPORT")),
-		DBName: os.Getenv("DBNAME"),
-	}
-	db, err := sql.Open("mysql", cfg.FormatDSN())
+	// Формування DSN для GORM
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=True&loc=Local",
+		os.Getenv("DBUSER"),
+		os.Getenv("DBPASS"),
+		os.Getenv("DBHOST"),
+		os.Getenv("DBPORT"),
+		os.Getenv("DBNAME"),
+	)
 
+	// Підключення до бази даних за допомогою GORM
+	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal("failed to connect database:", err)
 	}
-	defer db.Close() // Закриваємо з'єднання при завершенні програми
 
-	pingErr := db.Ping()
-	if pingErr != nil {
-		log.Fatal(pingErr)
+	// Виконання міграцій
+	if err := migrations.Migrate(db); err != nil {
+		log.Fatal("Migration failed:", err)
 	}
-	fmt.Println("Connected!")
-	if err := initDb(db); err != nil {
-		log.Fatal("Error initializing the database:", err)
-	}
+
+	fmt.Println("Connected to the database and migrations applied!")
+
+	// Запуск сервера
 	if err := http.ListenAndServe(port, router()); err != nil {
 		log.Fatal(err)
 	}
